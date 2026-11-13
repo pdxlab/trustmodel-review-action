@@ -1,5 +1,5 @@
 name: 'TrustModel Review'
-description: 'TrustScore gate for AI changes — posts a 10-dimension trust review on every PR, blocks merge on regression.'
+description: 'Metadata-only Trust Review preview. No PR evaluator is available; no passing gate is issued.'
 author: 'pdxlab'
 branding:
   icon: 'shield'
@@ -7,43 +7,40 @@ branding:
 
 inputs:
   api_key:
-    description: 'TrustModel API key (tm-...). Leave blank to use the free preliminary scan.'
+    description: 'TrustModel key for recording path-only metadata. No evaluator is available yet.'
     required: false
     default: ''
+  github_token:
+    description: 'Used only by this Action to publish PR comments and commit statuses; never uploaded to TrustModel.'
+    required: false
+    default: ${{ github.token }}
   threshold:
-    description: 'Minimum TrustScore (0-100) to pass the gate. Default 65.'
-    required: false
-    default: '65'
-  framework:
-    description: 'Compliance framework to map against (NIST_AI_RMF, EU_AI_ACT, ISO_42001, EEOC, HIPAA, or leave blank).'
+    description: 'Requested future evaluator threshold (1-100); server minimum applies.'
     required: false
     default: ''
-  block_on_regression:
-    description: 'Fail the check if the TrustScore drops vs. the base branch, even if above threshold. Default true.'
+  framework:
+    description: 'Optional framework metadata.'
     required: false
-    default: 'true'
-  cert_on_pass:
-    description: 'Auto-issue or renew an AgentCert when the check passes. Default false.'
-    required: false
-    default: 'false'
+    default: ''
   detect:
-    description: 'Comma-separated glob patterns for AI-related files. Defaults to the patterns in .trustmodel.yml, then built-in defaults.'
+    description: 'Comma-separated file-path patterns. Only paths are transmitted, never content.'
     required: false
     default: ''
   base_url:
-    description: 'TrustModel API base URL. Default https://api.trustmodel.ai.'
+    description: 'TrustModel gateway origin.'
     required: false
     default: 'https://api.trustmodel.ai'
-
 outputs:
-  trust_score:
-    description: 'The TrustScore (0-100) for the PR head.'
-  base_trust_score:
-    description: 'The TrustScore for the base branch (for diff computation).'
+  status:
+    description: 'not_available, passed, failed, or error. This preview returns not_available.'
   passed:
-    description: 'true if the gate passed, false if it failed.'
+    description: 'True only for an explicit server-verified PR diff evaluation pass.'
+  pr_diff_evaluated:
+    description: 'Whether the server actually evaluated the PR diff.'
+  trust_score:
+    description: 'Empty unless the server evaluated the PR diff.'
   report_url:
-    description: 'URL to the full report in the TrustModel console.'
+    description: 'Optional verified evaluation report.'
 
 runs:
   using: 'node20'

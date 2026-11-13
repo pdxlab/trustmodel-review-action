@@ -4,3 +4,6 @@ dist_ts/
 .env
 .env.*
 !.env.example
+
+# Local runner credentials
+.trustreviewenv

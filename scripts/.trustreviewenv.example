@@ -1,0 +1,18 @@
+# Literal KEY=value settings. Quote values with spaces; no shell expansion.
+TRUSTMODEL_BASE_URL=https://YOUR-DEPLOYED-GATEWAY
+TRUSTMODEL_API_KEY=
+
+# Needs read access to PR/files, plus PR comments and commit-status write access
+# when TRUSTREVIEW_POST_GITHUB=true. The runner publishes directly; this token
+# is never sent to the TrustModel API. Blank uses `gh auth token` instead.
+GITHUB_TOKEN=
+
+# Optional defaults; a PR URL on the command line overrides these.
+TRUSTREVIEW_REPO=
+TRUSTREVIEW_PR=
+TRUSTREVIEW_THRESHOLD=65
+TRUSTREVIEW_FRAMEWORK=
+TRUSTREVIEW_POST_GITHUB=true
+TRUSTREVIEW_TIMEOUT_SECONDS=300
+TRUSTREVIEW_POLL_SECONDS=3
+TRUSTREVIEW_DETECT="prompts/**,agents/**,evals/**,**/*.prompt,**/*.prompt.txt,**/*.jinja,**/*.jinja2,**/system_prompt*,**/model_config*,**/llm_config*,**/ai_config*,**/*agent*.py,**/*agent*.ts,**/*agent*.js,**/chains/**"
