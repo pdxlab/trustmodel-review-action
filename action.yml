@@ -1,0 +1,50 @@
+name: 'TrustModel Review'
+description: 'TrustScore gate for AI changes — posts a 10-dimension trust review on every PR, blocks merge on regression.'
+author: 'pdxlab'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  api_key:
+    description: 'TrustModel API key (tm-...). Leave blank to use the free preliminary scan.'
+    required: false
+    default: ''
+  threshold:
+    description: 'Minimum TrustScore (0-100) to pass the gate. Default 65.'
+    required: false
+    default: '65'
+  framework:
+    description: 'Compliance framework to map against (NIST_AI_RMF, EU_AI_ACT, ISO_42001, EEOC, HIPAA, or leave blank).'
+    required: false
+    default: ''
+  block_on_regression:
+    description: 'Fail the check if the TrustScore drops vs. the base branch, even if above threshold. Default true.'
+    required: false
+    default: 'true'
+  cert_on_pass:
+    description: 'Auto-issue or renew an AgentCert when the check passes. Default false.'
+    required: false
+    default: 'false'
+  detect:
+    description: 'Comma-separated glob patterns for AI-related files. Defaults to the patterns in .trustmodel.yml, then built-in defaults.'
+    required: false
+    default: ''
+  base_url:
+    description: 'TrustModel API base URL. Default https://api.trustmodel.ai.'
+    required: false
+    default: 'https://api.trustmodel.ai'
+
+outputs:
+  trust_score:
+    description: 'The TrustScore (0-100) for the PR head.'
+  base_trust_score:
+    description: 'The TrustScore for the base branch (for diff computation).'
+  passed:
+    description: 'true if the gate passed, false if it failed.'
+  report_url:
+    description: 'URL to the full report in the TrustModel console.'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
