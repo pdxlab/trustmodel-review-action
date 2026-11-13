@@ -60,6 +60,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.run_main("--dry-run")[0], 0)
         self.assertTrue(all(data is None for _, _, data in self.calls))
 
+    def test_malformed_success_body_is_published_as_error(self):
+        self.result = []
+        self.assertEqual(self.run_main()[0], 3)
+        status = next(data for url, _, data in self.calls if "/statuses/" in url)
+        self.assertEqual(status["state"], "error")
+
     def test_legacy_website_pass_is_rejected(self):
         self.result = {"status": "passed", "passed": True, "pr_diff_evaluated": False, "trust_score": 100}
         self.assertEqual(self.run_main()[0], 3)

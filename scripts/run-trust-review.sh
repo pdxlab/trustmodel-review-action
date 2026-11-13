@@ -237,6 +237,8 @@ def main(argv, script_dir):
     try:
         if key:
             result = api(f'{base}/v1/pr-trust/review/', key, payload)
+            if not isinstance(result, dict):
+                raise ReviewError('Invalid Trust Review response')
             deadline = time.monotonic() + timeout
             while result.get('status') in ('pending', 'running'):
                 run_id = result.get('run_id')
@@ -246,6 +248,8 @@ def main(argv, script_dir):
                     raise ReviewError('Polling timed out; no fallback assessment was performed')
                 time.sleep(min(interval, max(0, deadline-time.monotonic())))
                 result = api(f'{base}/v1/pr-trust/review/{run_id}/', key, timeout=min(15, max(1, deadline-time.monotonic())))
+                if not isinstance(result, dict):
+                    raise ReviewError('Invalid Trust Review polling response')
         else:
             result = {'status': 'not_available', 'passed': False, 'pr_diff_evaluated': False,
                       'trust_score': None, 'reason': 'api_key_missing',
