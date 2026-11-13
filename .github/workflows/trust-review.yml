@@ -1,0 +1,29 @@
+# This repo dog-foods itself — every PR gets a Trust Review.
+# PR → TR → deploy. No passing TR → no deploy.
+name: Trust Review (TR)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write  # post the TR comment
+  statuses: write       # set the trustmodel/trust-review check
+
+jobs:
+  trust-review:
+    name: Trust Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # Uses itself — this is the dog-food run.
+      # Once v1 tag is published, external users write: uses: pdxlab/trustmodel-review-action@v1
+      - uses: ./
+        with:
+          api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
+          threshold: 65
+          block_on_regression: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

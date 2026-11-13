@@ -6,93 +6,118 @@ import { Config } from './config';
 type Octokit = ReturnType<typeof getOctokit>;
 
 const GRADE_EMOJI: Record<string, string> = { A: '🟢', B: '🔵', C: '🟡', D: '🟠', F: '🔴' };
-const DIM_LABEL: Record<string, string> = {
-  safety: 'Safety', fairness: 'Fairness', privacy: 'Privacy', accuracy: 'Accuracy',
-  transparency: 'Transparency', compliance: 'Compliance', robustness: 'Robustness',
-  reliability: 'Reliability', explainability: 'Explainability', accountability: 'Accountability',
-  robustness_security: 'Robustness / Security', data_privacy: 'Data Privacy',
-  model_safety: 'Model Safety', ai_governance: 'AI Governance',
-};
+const MARKER = '<!-- trustmodel-trust-review -->';
 
-function dim(key: string): string { return DIM_LABEL[key] ?? key; }
-function delta(d: number): string {
-  if (d === 0) return '—';
-  const s = d > 0 ? `+${d}` : String(d);
-  return d <= -10 ? `⚠️ ${s}` : d < 0 ? `↓ ${s}` : `↑ ${s}`;
+function deltaStr(d: number | null | undefined): string {
+  if (d == null || d === 0) return '—';
+  if (d <= -10) return `⚠️ ${d > 0 ? '+' : ''}${d}`;
+  if (d <   0)  return `↓ ${d}`;
+  return `↑ +${d}`;
 }
 
 export async function postReviewComment({
-  octokit, ctx, pr, result, cfg,
+  octokit, ctx, prNumber, headSha, result, cfg,
 }: {
   octokit: Octokit;
   ctx: Context;
-  pr: { number: number; head: { sha: string } };
+  prNumber: number;
+  headSha: string;
   result: EvalResult;
   cfg: Config;
 }): Promise<void> {
   const passed = result.trustScore >= cfg.threshold;
-  const grade = result.grade ?? '—';
-  const emoji = GRADE_EMOJI[grade] ?? '⚪';
-  const diff = result.baseTrustScore !== undefined
-    ? ` (${result.trustScore > result.baseTrustScore ? '↑' : result.trustScore < result.baseTrustScore ? '↓' : '→'} from ${result.baseTrustScore})`
+  const grade  = result.grade ?? '—';
+  const emoji  = GRADE_EMOJI[grade] ?? '⚪';
+  const base   = result.baseTrustScore;
+  const diff   = base != null
+    ? ` (${result.trustScore > base ? '↑' : result.trustScore < base ? '↓' : '→'} from ${base})`
     : '';
 
-  let body = `## ${emoji} TrustModel Review — TrustScore **${result.trustScore}/100 (${grade})**${diff}\n\n`;
+  const lines: string[] = [MARKER, ''];
+  lines.push(`## ${emoji} Trust Review (TR) — TrustScore **${result.trustScore}/100 (${grade})**${diff}`);
+  lines.push('');
+  lines.push('> **Just as every change needs a PR review, every AI change needs a Trust Review (TR).  ');
+  lines.push('> PR → TR → deploy. No passing TR → no deploy.**');
+  lines.push('');
 
   if (result.free) {
-    body += `> **Free preliminary scan.** Add a \`TRUSTMODEL_API_KEY\` secret to get the full 10-dimension breakdown, compliance mapping, and optional AgentCert.\n>\n> [Upgrade →](https://app.trustmodel.ai/register)\n\n`;
+    lines.push('> **Free preliminary scan** — no API key detected.');
+    lines.push('> Add `TRUSTMODEL_API_KEY` to your repository secrets for the full 10-dimension');
+    lines.push('> breakdown: per-dimension diff, compliance framework mapping (NIST AI RMF,');
+    lines.push('> EU AI Act, EEOC…), critical-dimension regression blocking, and optional AgentCert.');
+    lines.push('>');
+    lines.push('> [⬆️ Upgrade to full Trust Review →](https://app.trustmodel.ai)  &nbsp;  [Get API key →](https://app.trustmodel.ai/keys)');
+    lines.push('');
   } else if (result.dimensionDeltas && result.dimensionDeltas.length > 0) {
-    body += `| Dimension | Before | After | Change |\n|---|---|---|---|\n`;
-    const sorted = [...result.dimensionDeltas].sort((a, b) => a.delta - b.delta);
+    lines.push('| Dimension | Before | After | Change |');
+    lines.push('|---|---|---|---|');
+    const sorted = [...result.dimensionDeltas].sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0));
     for (const d of sorted) {
-      body += `| ${d.critical ? '⭐ ' : ''}${dim(d.dimension)} | ${d.before ?? '—'} | ${d.after} | ${delta(d.delta)} |\n`;
+      const crit   = d.critical ? '⭐ ' : '';
+      const before = d.before != null ? String(d.before) : '—';
+      const after  = d.after  != null ? String(d.after)  : '—';
+      lines.push(`| ${crit}${d.label} | ${before} | ${after} | ${deltaStr(d.delta)} |`);
     }
-    body += `\n> ⭐ Critical dimension (Safety / Fairness / Privacy / Compliance)\n\n`;
+    lines.push('');
+    lines.push('> ⭐ Critical dimension — a drop of >10 points blocks the TR even if the overall score passes.');
+    lines.push('');
   }
 
-  // Warnings
-  const regressions = result.dimensionDeltas?.filter(d => d.critical && d.delta < -10) ?? [];
-  if (regressions.length > 0) {
-    body += `> ⚠️ **${regressions.map(d => dim(d.dimension)).join(', ')} dropped sharply.** Review before merging.\n\n`;
-  }
-  if (!passed) {
-    body += `> 🚫 **Score ${result.trustScore} is below the threshold (${cfg.threshold}).** This check will block merge.\n\n`;
-  } else if (regressions.length === 0) {
-    body += `> ✅ Gate passed — score ${result.trustScore} ≥ threshold ${cfg.threshold}.\n\n`;
+  // Warnings.
+  const regressions = (result.dimensionDeltas ?? []).filter(d => d.critical && (d.delta ?? 0) < -10);
+  if (regressions.length) {
+    const names = regressions.map(d => d.label).join(', ');
+    lines.push(`> ⚠️ **${names} dropped sharply. Review before merging.**`);
+    lines.push('');
   }
 
-  // Compliance gaps
-  if (result.complianceGaps && result.complianceGaps.length > 0) {
-    body += `**Compliance gaps** (${cfg.framework ?? 'framework'}):\n`;
-    for (const gap of result.complianceGaps.slice(0, 5)) body += `- ${gap}\n`;
-    body += '\n';
+  if (passed && !regressions.length) {
+    lines.push(`> ✅ **TR passed** — score ${result.trustScore} ≥ threshold ${cfg.threshold}.`);
+  } else if (!passed) {
+    lines.push(`> 🚫 **TR failed** — score ${result.trustScore} is below threshold (${cfg.threshold}). **Deploy blocked.**`);
+  }
+  lines.push('');
+
+  if (result.complianceGaps?.length) {
+    lines.push(`**Compliance gaps (${cfg.framework ?? 'framework'}):** ${result.complianceGaps.slice(0, 5).join(', ')}`);
+    lines.push('');
   }
 
-  // Links
+  // Deeplinks.
   const links: string[] = [];
   if (result.reportUrl) links.push(`[📊 Full report →](${result.reportUrl})`);
   if (result.certUrl)   links.push(`[🏅 AgentCert →](${result.certUrl})`);
-  links.push(`[🔍 TrustModel console →](https://app.trustmodel.ai)`);
-  body += links.join('  ·  ') + '\n\n';
-  body += `---\n*[TrustModel Review Action](https://github.com/pdxlab/trustmodel-review-action) — the AI trust gate for your CI/CD*`;
+  links.push('[🔍 TrustModel console →](https://app.trustmodel.ai)');
+  lines.push(links.join('  &nbsp;·&nbsp;  '));
+  lines.push('');
+  lines.push('---');
+  lines.push('*[AI Trust Reviewer](https://github.com/pdxlab/trustmodel-review-action) — the Trust Review for every AI PR. The `trustmodel/trust-review` check must be green before deploy.*');
 
-  // Find and update an existing bot comment, or create a new one.
-  const MARKER = '<!-- trustmodel-review -->';
-  const comments = await octokit.rest.issues.listComments({
-    owner: ctx.repo.owner, repo: ctx.repo.repo, issue_number: pr.number,
-  });
-  const existing = comments.data.find(c => c.body?.includes(MARKER));
+  const body = lines.join('\n');
 
-  const fullBody = MARKER + '\n' + body;
+  // Upsert: find our marker comment and update it, or create new.
+  const existing = await findExistingComment(octokit, ctx, prNumber);
   if (existing) {
     await octokit.rest.issues.updateComment({
       owner: ctx.repo.owner, repo: ctx.repo.repo,
-      comment_id: existing.id, body: fullBody,
+      comment_id: existing, body,
     });
   } else {
     await octokit.rest.issues.createComment({
       owner: ctx.repo.owner, repo: ctx.repo.repo,
-      issue_number: pr.number, body: fullBody,
+      issue_number: prNumber, body,
     });
   }
+}
+
+async function findExistingComment(octokit: Octokit, ctx: Context, prNumber: number): Promise<number | null> {
+  for await (const page of octokit.paginate.iterator(
+    octokit.rest.issues.listComments,
+    { owner: ctx.repo.owner, repo: ctx.repo.repo, issue_number: prNumber, per_page: 100 }
+  )) {
+    for (const c of page.data) {
+      if (c.body?.includes(MARKER)) return c.id;
+    }
+  }
+  return null;
 }

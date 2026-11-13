@@ -1,0 +1,23 @@
+# .trustmodel.yml — Trust Review configuration for this repo.
+# Checked in at the root. Action inputs override these values when both are set.
+# See https://github.com/pdxlab/trustmodel-review-action for full docs.
+
+detect:
+  # Files that trigger a Trust Review when changed.
+  # Uses minimatch glob syntax. Paths are relative to the repo root.
+  - "src/**/*.ts"             # action source (this repo uses TS as the AI asset)
+  - "action.yml"              # action interface changes are AI-surface changes
+  - "**/*.prompt"
+  - "**/prompts/**"
+  - "**/system_prompt*"
+  - "**/model_config*"
+  - "**/llm_config*"
+  - "**/agents/**"
+  - "**/evals/**"
+  - ".trustmodel.yml"         # changes to this file itself
+
+eval:
+  threshold: 65              # minimum TrustScore (0-100) to pass the TR
+  block_on_regression: true  # also fail if a critical dimension drops >10 pts vs base
+  cert_on_pass: false        # set true to auto-issue/renew an AgentCert on pass
+  # framework: NIST_AI_RMF   # optional: add compliance framework mapping

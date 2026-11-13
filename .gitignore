@@ -1,0 +1,6 @@
+node_modules/
+dist_ts/
+*.js.map
+.env
+.env.*
+!.env.example

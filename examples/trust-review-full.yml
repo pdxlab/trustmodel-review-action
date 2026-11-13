@@ -1,0 +1,41 @@
+# Example: full Trust Review workflow with all options.
+# Copy to .github/workflows/trust-review.yml in your repo.
+#
+# PR → TR → deploy. No passing TR → no deploy.
+# trustmodel/trust-review must be a required status check in your branch protection.
+
+name: Trust Review (TR)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # post the TR comment
+  statuses: write        # set trustmodel/trust-review check
+
+jobs:
+  trust-review:
+    name: Trust Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # required for git diff
+
+      - uses: pdxlab/trustmodel-review-action@v1
+        id: tr
+        with:
+          api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
+          threshold: 70                   # 0-100; default 65
+          framework: NIST_AI_RMF          # optional compliance overlay
+          block_on_regression: true       # fail if critical dimension drops >10 pts
+          cert_on_pass: false             # true → auto-issue AgentCert on green
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Optional: use TR outputs in later steps.
+      - if: always()
+        run: |
+          echo "Trust Review result: ${{ steps.tr.outputs.passed }}"
+          echo "TrustScore: ${{ steps.tr.outputs.trust_score }}/100"
+          echo "Report: ${{ steps.tr.outputs.report_url }}"

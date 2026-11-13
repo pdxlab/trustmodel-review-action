@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build & verify dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build dist/index.js
+        run: npm run build
+
+      - name: Verify dist is committed and up to date
+        run: |
+          if ! git diff --quiet dist/; then
+            echo "::error::dist/index.js is out of date. Run 'npm run build' and commit."
+            git diff dist/
+            exit 1
+          fi
+
+      - name: Check action.yml is valid
+        run: node -e "require('js-yaml').load(require('fs').readFileSync('action.yml','utf8')); console.log('action.yml valid')"
