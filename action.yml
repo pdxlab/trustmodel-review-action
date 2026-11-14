@@ -1,5 +1,5 @@
 name: 'TrustModel Review'
-description: 'Metadata-only Trust Review preview. No PR evaluator is available; no passing gate is issued.'
+description: 'PR metadata preview with an optional, separately labelled website TrustScore. No PR evaluator is available; no passing gate is issued.'
 author: 'pdxlab'
 branding:
   icon: 'shield'
@@ -30,7 +30,17 @@ inputs:
     description: 'TrustModel gateway origin.'
     required: false
     default: 'https://api.trustmodel.ai'
+  website_domain:
+    description: 'Optional explicit public domain for an informational website TrustScore. Never affects PR evaluation or its gate. Blank disables scanning.'
+    required: false
+    default: ''
 outputs:
+  website_domain:
+    description: 'Explicit domain assessed separately from the PR.'
+  website_scan_status:
+    description: 'disabled, assessed, or unavailable; never a PR gate decision.'
+  website_trust_score:
+    description: 'Informational website score, empty when unavailable or disabled. Never a PR score.'
   status:
     description: 'not_available, passed, failed, or error. This preview returns not_available.'
   passed:

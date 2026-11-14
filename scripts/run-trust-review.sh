@@ -7,6 +7,7 @@ exec python3 - "$trustreview_dir" "$@" <<'PY'
 import argparse
 import fnmatch
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -79,7 +80,8 @@ def boolean(settings, key, default):
 
 def api(url, token, payload=None, github=False, timeout=30, method=None):
     headers = {'Accept': 'application/vnd.github+json' if github else 'application/json'}
-    headers['Authorization' if github else 'X-API-Key'] = f'Bearer {token}' if github else token
+    if token:
+        headers['Authorization' if github else 'X-API-Key'] = f'Bearer {token}' if github else token
     if github:
         headers['X-GitHub-Api-Version'] = '2022-11-28'
     if payload is not None:
@@ -133,7 +135,39 @@ def validate_paths(paths):
             raise ReviewError('Each entry must be a relative repository file path (max 512 characters)')
 
 
-def publish_result(repo, number, head_sha, result, token):
+def normalize_website_domain(value):
+    domain = value.strip().lower()
+    labels = domain.split('.')
+    if (len(domain) > 253 or len(labels) < 2 or labels[-1].isdigit()
+            or labels[-1] in ('localhost', 'local', 'internal', 'test', 'invalid', 'example')
+            or any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in labels)):
+        raise ReviewError('Website domain must be an explicit public DNS domain, without a URL, path, or port')
+    return domain
+
+
+def scan_website(base, domain):
+    result = {'domain': domain, 'status': 'unavailable', 'trust_score': None}
+    try:
+        data = api(f'{base}/v1/public/site-score/{quote(domain, safe="")}/', '', timeout=15)
+        score = data.get('trust_score') if isinstance(data, dict) else None
+        if (isinstance(data, dict) and data.get('domain') == domain and data.get('assessed') is True
+                and type(score) in (int, float) and math.isfinite(score) and 0 <= score <= 100):
+            result.update(status='assessed', trust_score=score)
+    except ReviewError:
+        pass  # Informational scan failures never alter the PR result or exit code.
+    return result
+
+
+def website_comment(website):
+    score = (f"Website TrustScore: **{website['trust_score']}/100**." if website['status'] == 'assessed'
+             else 'Website TrustScore: unavailable.')
+    return ('\n\n---\n### Website TrustScore — informational\n\n'
+            f"Website: `{website['domain']}`\n\n{score}\n\n"
+            'This is a website assessment (possibly cached), not a review of this PR or its code. '
+            'It does not affect the PR gate, threshold, or exit code.')
+
+
+def publish_result(repo, number, head_sha, result, token, website=None):
     verified = result.get('status') == 'passed' and result.get('passed') is True and result.get('pr_diff_evaluated') is True
     state = 'success' if verified else 'failure' if result.get('status') == 'failed' and result.get('pr_diff_evaluated') is True else 'error'
     description = ('Verified PR diff evaluation passed' if verified else
@@ -156,9 +190,11 @@ def publish_result(repo, number, head_sha, result, token):
     else:
         raise ReviewError('Too many comment pages to safely locate the review comment')
     if not result.get('pr_diff_evaluated'):
-        body = marker + '\n## Trust Review — not available\n\nThe PR diff evaluator is not available. **No code was evaluated and no passing gate was issued.**\n\nThis is not a website TrustScore.'
+        body = marker + '\n## Trust Review — not available\n\nThe PR diff evaluator is not available. **No code was evaluated and no passing gate was issued.**\n\nThe PR result is independent of any informational website assessment below.'
     else:
         body = marker + f"\n## Trust Review — {'passed' if verified else 'not passed'}\n\nPR diff evaluated: yes. Score: {result.get('trust_score')}/100."
+    if website:
+        body += website_comment(website)
     url = (f'https://api.github.com/repos/{repo}/issues/comments/{comment_id}' if comment_id else
            f'https://api.github.com/repos/{repo}/issues/{number}/comments')
     api(url, token, {'body': body}, github=True, method='PATCH' if comment_id else 'POST')
@@ -175,6 +211,7 @@ def main(argv, script_dir):
     parser.add_argument('--pr', type=int, help='PR number; alternatively set TRUSTREVIEW_PR')
     parser.add_argument('--env-file', type=Path, default=Path(script_dir) / '.trustreviewenv')
     parser.add_argument('--paths', type=Path, help='Use a local JSON array of file paths instead of auto-detection')
+    parser.add_argument('--website-domain', help='Optional informational website score for an explicit public domain; never a PR score')
     parser.add_argument('--dry-run', action='store_true', help='Read GitHub and show a sanitized summary; do not submit or post')
     parser.add_argument('--json', action='store_true', help='Print the final API result as JSON on stdout')
     args = parser.parse_args(argv)
@@ -201,6 +238,8 @@ def main(argv, script_dir):
         raise ReviewError('TRUSTMODEL_BASE_URL must be the gateway origin, without /api or /v1')
     if parsed.scheme == 'http' and parsed.hostname not in ('localhost', '127.0.0.1', '::1'):
         raise ReviewError('Use HTTPS for remote gateways; HTTP is allowed only for localhost')
+    domain = args.website_domain if args.website_domain is not None else settings.get('TRUSTREVIEW_WEBSITE_DOMAIN', '')
+    domain = normalize_website_domain(domain) if domain else ''
     key = settings.get('TRUSTMODEL_API_KEY', '')
     token = settings.get('GITHUB_TOKEN') or settings.get('GH_TOKEN')
     if not token:
@@ -226,6 +265,8 @@ def main(argv, script_dir):
         paths = collect_paths(repo, number, pr, token, patterns)
     print(f'{repo}#{number} | head {pr["head"]["sha"][:12]} | {len(paths)} matching file path(s)', file=sys.stderr)
     print(f'Gateway: {base} | GitHub posting: {post_github} | requested threshold: {threshold}', file=sys.stderr)
+    if domain:
+        print(f'Optional website: {domain} | informational only; never affects PR status', file=sys.stderr)
     if args.dry_run:
         print('Dry run complete. No review submitted; no comments or statuses posted.', file=sys.stderr)
         return 0
@@ -268,9 +309,12 @@ def main(argv, script_dir):
         exit_error = True
         result = {'status': 'error', 'passed': False, 'pr_diff_evaluated': False,
                   'trust_score': None, 'message': 'Trust Review service could not complete the request. No passing gate was issued.'}
+    website = scan_website(base, domain) if domain else None
+    if website:
+        result['website_scan'] = website
     if post_github:
         try:
-            publish_result(repo, number, pr['head']['sha'], result, token)
+            publish_result(repo, number, pr['head']['sha'], result, token, website)
         except ReviewError:
             exit_error = True
             print('GitHub publication failed. Check token permissions; no alternate passing status was issued.', file=sys.stderr)
@@ -280,6 +324,8 @@ def main(argv, script_dir):
     else:
         print(f"Status: {result['status']} | Passed: {passed} | PR diff evaluated: {result['pr_diff_evaluated']}")
         print(result.get('message', 'Review completed.'))
+        if website:
+            print(f"Website TrustScore (informational): {website['domain']} | {website['trust_score'] if website['trust_score'] is not None else 'unavailable'} | not a PR code review")
         if result.get('run_id'):
             print(f"Run: {result['run_id']}")
     return 3 if exit_error else 0 if passed else 2

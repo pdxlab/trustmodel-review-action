@@ -7,7 +7,7 @@ configured, records metadata through `POST /v1/pr-trust/review/`. It never reads
 or uploads those files' contents. Its GitHub token remains on the runner and is
 used only for GitHub comments and commit statuses.
 
-There is no public website scan, no paid/full-evaluation claim, no certificate,
+There is no automatic website scan, no paid/full-evaluation claim, no certificate,
 and no fallback on missing keys, backend errors, HTTP 404/503, network failures,
 or polling timeout. A website score is never a PR TrustScore.
 
@@ -55,7 +55,8 @@ The optional `github_token` input defaults to `${{ github.token }}`.
 comment and an **error** state for `trustmodel/trust-review`, then fails its job
 with that availability message. Do not require this preview check for merging.
 Even an empty matching-path list cannot become a passing skip. Without an API
-key, the Action reports not available without calling the TrustModel API.
+key, the Action reports not available without calling the PR evaluation API.
+An explicitly configured informational website scan is independent of this.
 
 Only a future response explicitly containing `status=passed`, `passed=true`,
 `pr_diff_evaluated=true`, and a valid numeric score can become a passing status.
@@ -80,12 +81,43 @@ evals, chains, and tools; those broad matches transmit names only. An optional
 previous `block_on_regression` and `cert_on_pass` inputs are not supported by this
 preview; no regression evaluation or certificate is claimed.
 
+## Optional website TrustScore (informational only)
+
+A website score can be useful context, but it does not assess this PR's code.
+Enable it explicitly with an Action input:
+
+```yaml
+with:
+  api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
+  base_url: https://YOUR-DEPLOYED-GATEWAY
+  website_domain: your-company.com
+```
+
+The Action requests `GET /v1/public/site-score/{domain}/` without a TrustModel
+key or GitHub token. It never guesses a domain from the repository owner. The
+backend may return a cached website assessment; no before/after PR comparison
+or ten-dimension PR review is implied. The comment has a separate **Website
+TrustScore — informational** section, explicitly identifying the domain.
+
+Website results use separate `website_domain`, `website_scan_status`, and
+`website_trust_score` outputs. They never populate the PR `trust_score`, change
+its threshold/status, or make the Action pass. A 100/100 website score still
+leaves an unavailable PR evaluator as an error. A website outage never changes
+an otherwise verified PR result. This is independently requested information,
+not a fallback when PR evaluation fails. Blank `website_domain` disables it.
+
+For the local runner, add `TRUSTREVIEW_WEBSITE_DOMAIN=your-company.com` to
+`.trustreviewenv`, or pass `--website-domain your-company.com`. The `--json`
+result nests website information under `website_scan`; the PR fields and exit
+code are unchanged. `--dry-run` performs no website scan or publication.
+
 ## Development
 
 ```bash
 npm ci
 npm test
 npm run build
+python3 tests/website_e2e.py
 ```
 
 Commit `dist/index.js` and `dist/sourcemap-register.js`. CI rebuilds the bundle

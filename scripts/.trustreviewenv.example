@@ -16,3 +16,7 @@ TRUSTREVIEW_POST_GITHUB=true
 TRUSTREVIEW_TIMEOUT_SECONDS=300
 TRUSTREVIEW_POLL_SECONDS=3
 TRUSTREVIEW_DETECT="prompts/**,agents/**,evals/**,**/*.prompt,**/*.prompt.txt,**/*.jinja,**/*.jinja2,**/system_prompt*,**/model_config*,**/llm_config*,**/ai_config*,**/*agent*.py,**/*agent*.ts,**/*agent*.js,**/chains/**"
+
+# Optional explicit domain for informational website scoring. Blank disables it.
+# This never affects the PR score, gate, or exit code; no domain is guessed.
+TRUSTREVIEW_WEBSITE_DOMAIN=

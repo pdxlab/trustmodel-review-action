@@ -8,6 +8,7 @@ const { runEval, parseResult, unavailable, verifiedPass } = require('../dist_ts/
 const { buildComment, publishResult } = require('../dist_ts/comment.js');
 const { detectAiChanges } = require('../dist_ts/detector.js');
 const { readTrustmodelConfig } = require('../dist_ts/config.js');
+const { scanWebsite, normalizeWebsiteDomain } = require('../dist_ts/website.js');
 const cfg = { apiKey: 'tm-test', baseUrl: 'http://127.0.0.1:8000', threshold: 65, detectPatterns: [] };
 const opts = { cfg, changedFiles: ['agents/run.py'], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), repo: 'acme/app', prNumber: 1 };
 const na = { status: 'not_available', passed: false, pr_diff_evaluated: false, trust_score: null, grade: null };
@@ -116,4 +117,52 @@ test('config rejects unsafe API origins and invalid thresholds', async()=>{
     await assert.rejects(readTrustmodelConfig({...cfg,baseUrl}));
   }
   await assert.rejects(readTrustmodelConfig({...cfg,threshold:0}));
+});
+
+test('website scan requires an explicit public domain, never guesses from a repository', () => {
+  assert.equal(normalizeWebsiteDomain('TrustModel.AI'), 'trustmodel.ai');
+  for (const domain of ['https://trustmodel.ai', 'trustmodel.ai/path', '127.0.0.1', 'localhost',
+                        'host.internal', 'trustmodel.ai:443', 'trustmodel.ai?token=x', 'a..com']) {
+    assert.throws(() => normalizeWebsiteDomain(domain));
+  }
+});
+
+test('informational website request sends no API key, GitHub token, or PR data', async () => {
+  const website = await scanWebsite({baseUrl: cfg.baseUrl, domain:'trustmodel.ai', transport: async (url, req) => {
+    assert.equal(url, `${cfg.baseUrl}/v1/public/site-score/trustmodel.ai/`);
+    assert.deepEqual(req.headers, {Accept:'application/json'});
+    assert.equal(req.body, undefined);
+    assert.equal(req.redirect, 'error');
+    return json({domain:'trustmodel.ai',assessed:true,trust_score:100});
+  }});
+  const kit=octokit();
+  await publishResult({octokit:kit,owner:'acme',repo:'app',prNumber:1,headSha:opts.headSha,result:unavailable(),website});
+  assert.equal(kit.calls[0][1].state, 'error');
+  assert.equal(kit.calls[0][1].target_url, undefined);
+  const body=kit.calls[1][1].body;
+  assert.match(body,/Trust Review — not available/);
+  assert.match(body,/Website TrustScore — informational/);
+  assert.match(body,/100\/100/);
+  assert.match(body,/not a review of this PR or its code/);
+  assert.equal(verifiedPass(unavailable()),false);
+});
+
+test('invalid or mismatched website scores are unavailable, not invented zeros', async () => {
+  for (const data of [null, {domain:'other.ai',assessed:true,trust_score:99},
+      {domain:'trustmodel.ai',assessed:false,trust_score:99},
+      {domain:'trustmodel.ai',assessed:true,trust_score:'99'},
+      {domain:'trustmodel.ai',assessed:true,trust_score:101}]) {
+    const result=await scanWebsite({baseUrl:cfg.baseUrl,domain:'trustmodel.ai',transport:async()=>json(data)});
+    assert.equal(result.status,'unavailable');assert.equal(result.trustScore,null);
+  }
+});
+
+test('website outage cannot change a verified PR result', async () => {
+  const website=await scanWebsite({baseUrl:cfg.baseUrl,domain:'trustmodel.ai',transport:async()=>{throw new Error('network');}});
+  const result=parseResult({status:'passed',passed:true,pr_diff_evaluated:true,trust_score:90});
+  const kit=octokit();
+  await publishResult({octokit:kit,owner:'acme',repo:'app',prNumber:1,headSha:opts.headSha,result,website});
+  assert.equal(kit.calls[0][1].state,'success');
+  assert.match(kit.calls[1][1].body,/Website TrustScore: unavailable/);
+  assert.equal(result.trustScore,90);
 });

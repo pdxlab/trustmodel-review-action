@@ -25,6 +25,9 @@ jobs:
       - name: Build dist/index.js
         run: npm run build
 
+      - name: Built Action and runner website integration
+        run: python3 tests/website_e2e.py
+
       - name: Verify dist is committed and up to date
         run: |
           if ! git diff --quiet dist/; then

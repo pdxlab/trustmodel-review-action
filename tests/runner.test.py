@@ -24,10 +24,15 @@ class RunnerTests(unittest.TestCase):
         self.paths.write_text('["agents/run.py"]')
         self.calls = []
         self.result = {"status": "not_available", "passed": False, "pr_diff_evaluated": False, "trust_score": None}
+        self.website = {"domain": "trustmodel.ai", "assessed": True, "trust_score": 100}
         self.ns["api"] = self.api
 
     def api(self, url, token, payload=None, **kwargs):
         self.calls.append((url, token, payload))
+        if '/v1/public/site-score/' in url:
+            self.assertEqual(token, '')
+            self.assertIsNone(payload)
+            return self.website
         if "api.github.com" in url:
             self.assertEqual(token, "gh-secret")
             if "/pulls/" in url:
@@ -109,6 +114,69 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.ns["load_settings"](p)["EXAMPLE"], "$(never-execute)")
         with self.assertRaises(self.ns["ReviewError"]):
             self.ns["validate_paths"]([{"path": "a", "content": "private source"}])
+
+    def test_optional_website_score_is_separate_and_never_passes_pr(self):
+        code, out = self.run_main('--website-domain', 'trustmodel.ai', '--json')
+        self.assertEqual(code, 2)
+        result = json.loads(out)
+        self.assertIsNone(result['trust_score'])
+        self.assertFalse(result['pr_diff_evaluated'])
+        self.assertEqual(result['website_scan']['trust_score'], 100)
+        status = next(data for url, _, data in self.calls if '/statuses/' in url)
+        self.assertEqual(status['state'], 'error')
+        body = next(data['body'] for url, _, data in self.calls if '/comments' in url and data)
+        self.assertIn('Website TrustScore — informational', body)
+        self.assertIn('not a review of this PR or its code', body)
+
+    def test_website_dry_run_does_not_scan_or_publish(self):
+        self.assertEqual(self.run_main('--website-domain', 'trustmodel.ai', '--dry-run')[0], 0)
+        self.assertTrue(all('api.github.com' in url and data is None for url, _, data in self.calls))
+
+    def test_website_failure_does_not_change_verified_pr_exit_code(self):
+        self.result = {'status':'passed','passed':True,'pr_diff_evaluated':True,'trust_score':90}
+        def fail(url, token, payload=None, **kwargs):
+            if 'site-score' in url:
+                raise self.ns['ApiError'](503)
+            return self.api(url, token, payload, **kwargs)
+        self.ns['api'] = fail
+        self.assertEqual(self.run_main('--website-domain', 'trustmodel.ai')[0], 0)
+        status = next(data for url, _, data in self.calls if '/statuses/' in url)
+        self.assertEqual(status['state'], 'success')
+
+    def test_website_scan_is_explicit_not_an_error_fallback(self):
+        def fail(url, token, payload=None, **kwargs):
+            if '/v1/pr-trust/' in url:
+                raise self.ns['ApiError'](503)
+            return self.api(url, token, payload, **kwargs)
+        self.ns['api'] = fail
+        code, out = self.run_main('--website-domain', 'trustmodel.ai', '--json')
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(out)['status'], 'error')
+        self.assertEqual(json.loads(out)['website_scan']['trust_score'], 100)
+
+    def test_invalid_domains_and_scores_never_become_website_assessments(self):
+        for domain in ['https://trustmodel.ai', '127.0.0.1', 'host.internal', 'a..com']:
+            with self.assertRaises(self.ns['ReviewError']):
+                self.ns['normalize_website_domain'](domain)
+        for score in [True, '99', 101, float('nan')]:
+            self.website['trust_score'] = score
+            self.assertEqual(self.ns['scan_website']('http://127.0.0.1:8000', 'trustmodel.ai')['status'], 'unavailable')
+
+    def test_public_transport_sends_no_credentials(self):
+        ns = {'__name__':'public_transport_test'}
+        exec(compile(source, str(SCRIPT), 'exec'), ns)
+        seen = []
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, size): return b'{}'
+        def receive(request, **kwargs):
+            seen.append(request)
+            return Response()
+        ns['urlopen'] = receive
+        ns['api']('https://gateway.example/v1/public/site-score/trustmodel.ai/', '')
+        self.assertEqual(dict(seen[0].header_items()), {'Accept':'application/json'})
+        self.assertIsNone(seen[0].data)
 
 
 if __name__ == "__main__":
