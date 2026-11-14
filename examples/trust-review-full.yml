@@ -1,41 +1,28 @@
-# Example: full Trust Review workflow with all options.
-# Copy to .github/workflows/trust-review.yml in your repo.
-#
-# PR → TR → deploy. No passing TR → no deploy.
-# trustmodel/trust-review must be a required status check in your branch protection.
-
-name: Trust Review (TR)
-
-on:
-  pull_request:
-
+name: Trust Review preview
+on: [pull_request]
 permissions:
   contents: read
-  pull-requests: write   # post the TR comment
-  statuses: write        # set trustmodel/trust-review check
-
+  pull-requests: write
+  issues: write
+  statuses: write
+concurrency:
+  group: trust-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   trust-review:
-    name: Trust Review
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }   # required for git diff
-
-      - uses: pdxlab/trustmodel-review-action@v1
-        id: tr
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: pdxlab/trustmodel-review-action@REVIEWED_COMMIT_SHA
         with:
           api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
-          threshold: 70                   # 0-100; default 65
-          framework: NIST_AI_RMF          # optional compliance overlay
-          block_on_regression: true       # fail if critical dimension drops >10 pts
-          cert_on_pass: false             # true → auto-issue AgentCert on green
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Optional: use TR outputs in later steps.
-      - if: always()
-        run: |
-          echo "Trust Review result: ${{ steps.tr.outputs.passed }}"
-          echo "TrustScore: ${{ steps.tr.outputs.trust_score }}/100"
-          echo "Report: ${{ steps.tr.outputs.report_url }}"
+          base_url: https://YOUR-DEPLOYED-GATEWAY
+          detect: 'prompts/**,agents/**,**/*.prompt'
+          threshold: '75'
+          framework: NIST_AI_RMF

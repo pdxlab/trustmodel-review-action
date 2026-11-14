@@ -1,105 +1,64 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { detectAiChanges } from './detector';
-import { runEval, EvalResult } from './eval';
-import { postReviewComment } from './comment';
+import { runEval, EvalResult, verifiedPass, evaluationError } from './eval';
+import { publishResult } from './comment';
 import { readTrustmodelConfig } from './config';
+import { normalizeWebsiteDomain, scanWebsite, WebsiteResult } from './website';
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
+  const ctx = github.context;
+  if (ctx.eventName !== 'pull_request') {
+    core.setOutput('status', 'not_applicable'); core.setOutput('passed', 'false');
+    core.info('This action requires a pull_request event. No passing gate was issued.');
+    return;
+  }
+  const pr = ctx.payload.pull_request as { number: number; base: { sha: string }; head: { sha: string } } | undefined;
+  if (!pr || !Number.isInteger(pr.number) || pr.number <= 0 || ![pr.head?.sha, pr.base?.sha].every(sha => /^[0-9a-f]{40}$/i.test(sha))) {
+    core.setFailed('Invalid pull_request metadata.'); return;
+  }
+  const githubToken = core.getInput('github_token') || process.env.GITHUB_TOKEN || '';
+  const apiKey = core.getInput('api_key');
+  if (apiKey) core.setSecret(apiKey);
+  if (githubToken) core.setSecret(githubToken);
+  let result: EvalResult;
+  let website: WebsiteResult | undefined;
+  let websiteRequest: { baseUrl: string; domain: string } | undefined;
   try {
-    const ctx = github.context;
-    if (ctx.eventName !== 'pull_request') {
-      core.info('Not a pull_request event — skipping.');
-      return;
-    }
-
-    // The GitHub Actions SDK types payload.pull_request loosely — cast to what we need.
-    const pr = ctx.payload.pull_request as {
-      number: number;
-      base: { sha: string };
-      head: { sha: string };
-    } | undefined;
-
-    if (!pr?.head?.sha || !pr?.base?.sha) {
-      core.setFailed('pull_request payload is missing expected fields.');
-      return;
-    }
-
-    const cfg = await readTrustmodelConfig({
-      apiKey:            core.getInput('api_key'),
-      threshold:         parseInt(core.getInput('threshold'), 10) || 65,
-      framework:         core.getInput('framework') || undefined,
-      blockOnRegression: core.getInput('block_on_regression') !== 'false',
-      certOnPass:        core.getInput('cert_on_pass') === 'true',
-      detectPatterns:    core.getInput('detect').split(',').map(s => s.trim()).filter(Boolean),
-      baseUrl:           core.getInput('base_url') || 'https://api.trustmodel.ai',
-    });
-
-    // 1. Detect which AI-related files changed in this PR.
-    const changedFiles = await detectAiChanges({
-      baseSha: pr.base.sha,
-      headSha: pr.head.sha,
-      patterns: cfg.detectPatterns,
-    });
-
-    if (changedFiles.length === 0) {
-      core.info('No AI-related files changed — Trust Review skipped.');
-      core.setOutput('passed', 'true');
-      core.setOutput('trust_score', '');
-      return;
-    }
-
-    core.info(`AI-related files changed (${changedFiles.length}): ${changedFiles.join(', ')}`);
-
-    // 2. Run TrustModel eval against the changed assets.
-    const repo = `${ctx.repo.owner}/${ctx.repo.repo}`;
-    const result: EvalResult = await runEval({
-      cfg, changedFiles,
-      baseSha: pr.base.sha, headSha: pr.head.sha,
-      repo, prNumber: pr.number,
-    });
-
-    // 3. Post the Trust Review comment.
-    const octokit = github.getOctokit(process.env.GITHUB_TOKEN!);
-    await postReviewComment({ octokit, ctx, prNumber: pr.number, headSha: pr.head.sha, result, cfg });
-
-    // 4. Set the trustmodel/trust-review commit status check.
-    const passed = computePass(result, cfg);
-    await octokit.rest.repos.createCommitStatus({
-      owner: ctx.repo.owner,
-      repo:  ctx.repo.repo,
-      sha:   pr.head.sha,
-      state:       passed ? 'success' : 'failure',
-      context:     'trustmodel/trust-review',
-      description: `TR: TrustScore ${result.trustScore}/100 (${result.grade}) — ${passed ? 'passed ✓' : 'failed ✗'}`,
-      target_url:  result.reportUrl ?? 'https://app.trustmodel.ai',
-    });
-
-    // 5. Outputs for downstream steps.
-    core.setOutput('trust_score',      String(result.trustScore));
-    core.setOutput('base_trust_score', String(result.baseTrustScore ?? ''));
-    core.setOutput('passed',           String(passed));
-    core.setOutput('report_url',       result.reportUrl ?? '');
-
-    if (!passed) {
-      core.setFailed(
-        `Trust Review failed — TrustScore ${result.trustScore}/100 (threshold ${cfg.threshold}). ` +
-        `No deploy without a passing TR. See ${result.reportUrl ?? 'https://app.trustmodel.ai'}`
-      );
-    }
-  } catch (err: unknown) {
-    core.setFailed(err instanceof Error ? err.message : String(err));
+    const input = core.getInput('threshold');
+    if (input && !/^[0-9]+$/.test(input)) throw new Error('Invalid threshold.');
+    const cfg = await readTrustmodelConfig({ apiKey, threshold: input ? Number(input) : undefined,
+      framework: core.getInput('framework') || undefined, detectPatterns: core.getInput('detect').split(',').map(s => s.trim()).filter(Boolean),
+      baseUrl: core.getInput('base_url') || 'https://api.trustmodel.ai' });
+    const domain = core.getInput('website_domain');
+    if (domain) websiteRequest = { baseUrl: cfg.baseUrl, domain: normalizeWebsiteDomain(domain) };
+    const changedFiles = await detectAiChanges({ baseSha: pr.base.sha, headSha: pr.head.sha, patterns: cfg.detectPatterns });
+    core.info(`Detected ${changedFiles.length} matching file path(s). Source content is never read or uploaded.`);
+    result = await runEval({ cfg, changedFiles, baseSha: pr.base.sha, headSha: pr.head.sha,
+                             repo: `${ctx.repo.owner}/${ctx.repo.repo}`, prNumber: pr.number });
+  } catch {
+    // Do not echo upstream error text or substitute a website scan.
+    result = evaluationError();
   }
+  // Independent, explicitly requested information. Never substitute it for runEval.
+  if (websiteRequest) website = await scanWebsite(websiteRequest);
+  core.setOutput('website_domain', website?.domain ?? '');
+  core.setOutput('website_scan_status', website?.status ?? 'disabled');
+  core.setOutput('website_trust_score', website?.trustScore === null || !website ? '' : String(website.trustScore));
+  core.setOutput('status', result.status);
+  core.setOutput('passed', String(verifiedPass(result)));
+  core.setOutput('pr_diff_evaluated', String(result.prDiffEvaluated));
+  core.setOutput('trust_score', result.trustScore === null ? '' : String(result.trustScore));
+  core.setOutput('report_url', result.reportUrl ?? '');
+  try {
+    if (!githubToken) throw new Error('missing GitHub credential');
+    await publishResult({ octokit: github.getOctokit(githubToken), owner: ctx.repo.owner, repo: ctx.repo.repo,
+                          prNumber: pr.number, headSha: pr.head.sha, result, website });
+  } catch {
+    core.setFailed('GitHub publication failed; check token permissions. No alternate passing status was issued.');
+    return;
+  }
+  if (!verifiedPass(result)) core.setFailed(result.message);
 }
 
-function computePass(result: EvalResult, cfg: { threshold: number; blockOnRegression: boolean }): boolean {
-  if (result.trustScore < cfg.threshold) return false;
-  if (cfg.blockOnRegression && result.baseTrustScore !== undefined) {
-    const criticalRegressions = result.dimensionDeltas
-      ?.filter(d => d.critical && d.delta < -10).length ?? 0;
-    if (criticalRegressions > 0) return false;
-  }
-  return true;
-}
-
-run();
+if (require.main === module) void run();

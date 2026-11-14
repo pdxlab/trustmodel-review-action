@@ -1,11 +1,25 @@
-# Minimal Trust Review — 2 lines. Paste this into your existing CI workflow.
-# PR → TR → deploy. Add TRUSTMODEL_API_KEY to your repo secrets.
-
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-
-      - uses: pdxlab/trustmodel-review-action@v1
+name: Trust Review preview
+on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+concurrency:
+  group: trust-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  trust-review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: pdxlab/trustmodel-review-action@REVIEWED_COMMIT_SHA
         with:
           api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          base_url: https://YOUR-DEPLOYED-GATEWAY
