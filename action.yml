@@ -18,10 +18,21 @@ inputs:
     description: 'Compliance framework to map against (NIST_AI_RMF, EU_AI_ACT, ISO_42001, EEOC, HIPAA, or leave blank).'
     required: false
     default: ''
+  mode:
+    description: |
+      advisory — check always concludes neutral (never failure). Regressions shown as warnings. Safe default.
+      enforce  — check fails when score is below threshold or a critical-dimension regression fires.
+      After 14 days or 10 TR runs the comment adds a one-line nudge to switch to enforce.
+    required: false
+    default: 'advisory'
   block_on_regression:
-    description: 'Fail the check if the TrustScore drops vs. the base branch, even if above threshold. Default true.'
+    description: 'In enforce mode: also fail if Safety/Fairness/Privacy/Compliance drops >10 pts. Default true.'
     required: false
     default: 'true'
+  detect_debug:
+    description: 'Log each matched file and the reason it matched. Useful for tuning detect patterns.'
+    required: false
+    default: 'false'
   cert_on_pass:
     description: 'Auto-issue or renew an AgentCert when the check passes. Default false.'
     required: false
