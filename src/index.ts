@@ -130,11 +130,47 @@ async function run(): Promise<void> {
   }
 }
 
+/**
+ * Determine whether a dimension delta is a real regression or judge noise.
+ *
+ * A drop is a real regression only if the CI bands do NOT overlap, i.e.
+ *   after_ci_high < before_ci_low
+ * which means the entire "after" distribution sits below the entire "before"
+ * distribution.  When bands overlap the delta is "within noise" and must not
+ * block the gate.
+ *
+ * Falls back to the legacy >10-point rule when CI data is absent.
+ */
+function isCriticalRegression(d: {
+  delta: number;
+  critical: boolean;
+  ci_low?: number | null;
+  ci_high?: number | null;
+  before_ci_low?: number | null;
+  before_ci_high?: number | null;
+}): boolean {
+  if (!d.critical || d.delta >= 0) return false;
+
+  const hasCI = (
+    d.ci_low != null && d.ci_high != null &&
+    d.before_ci_low != null && d.before_ci_high != null
+  );
+
+  if (hasCI) {
+    // Real regression: CI bands don't overlap.
+    // after_ci_high must be strictly below before_ci_low.
+    return (d.ci_high as number) < (d.before_ci_low as number);
+  }
+
+  // Legacy fallback: use the hard >10-point threshold.
+  return d.delta < -10;
+}
+
 function computePass(result: EvalResult, cfg: { threshold: number; blockOnRegression: boolean }): boolean {
   if (result.trustScore < cfg.threshold) return false;
   if (cfg.blockOnRegression && result.baseTrustScore !== undefined) {
     const criticalRegressions = result.dimensionDeltas
-      ?.filter(d => d.critical && d.delta < -10).length ?? 0;
+      ?.filter(d => isCriticalRegression(d)).length ?? 0;
     if (criticalRegressions > 0) return false;
   }
   return true;

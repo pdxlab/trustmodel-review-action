@@ -2,6 +2,15 @@ import * as core from '@actions/core';
 import { readFileSync, existsSync } from 'fs';
 import { Config } from './config';
 
+export interface DimensionVariance {
+  score: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  stdev: number;
+  n_samples: number;
+  n_scored: number;
+}
+
 export interface DimensionDelta {
   dimension: string;
   label: string;
@@ -9,6 +18,13 @@ export interface DimensionDelta {
   after: number;
   delta: number;
   critical: boolean;
+  // Variance fields — present when the backend used N-sample evaluation.
+  // ci_low/ci_high are on the "after" (head) measurement.
+  ci_low?: number | null;
+  ci_high?: number | null;
+  // before_ci_low/before_ci_high are on the "before" (base) measurement.
+  before_ci_low?: number | null;
+  before_ci_high?: number | null;
 }
 
 export interface EvalResult {
@@ -162,6 +178,9 @@ async function pollResult(cfg: Config, runId: string, opts: RunEvalOpts): Promis
       base_trust_score?: number;
       factor_scores?: Record<string, number>;
       base_factor_scores?: Record<string, number>;
+      // Variance maps — present when backend ran N-sample eval (tr-gtm-4).
+      dimension_variance?: Record<string, DimensionVariance>;
+      base_dimension_variance?: Record<string, DimensionVariance>;
       compliance_gaps?: string[];
       report_url?: string; cert_url?: string;
     };
@@ -171,6 +190,8 @@ async function pollResult(cfg: Config, runId: string, opts: RunEvalOpts): Promis
 
     const dimensionDeltas = Object.entries(d.factor_scores ?? {}).map(([dim, after]) => {
       const before = d.base_factor_scores?.[dim] ?? null;
+      const afterVar  = d.dimension_variance?.[dim] ?? null;
+      const beforeVar = d.base_dimension_variance?.[dim] ?? null;
       return {
         dimension: dim,
         label: DIM_LABEL[dim] ?? dim,
@@ -178,6 +199,10 @@ async function pollResult(cfg: Config, runId: string, opts: RunEvalOpts): Promis
         after,
         delta: before !== null ? after - before : 0,
         critical: CRITICAL_DIMS.has(dim),
+        ci_low:        afterVar?.ci_low  ?? null,
+        ci_high:       afterVar?.ci_high ?? null,
+        before_ci_low:  beforeVar?.ci_low  ?? null,
+        before_ci_high: beforeVar?.ci_high ?? null,
       };
     });
 

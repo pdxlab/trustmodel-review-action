@@ -1,12 +1,28 @@
 import type { getOctokit } from '@actions/github';
 import type { Context } from '@actions/github/lib/context';
-import { EvalResult } from './eval';
+import { EvalResult, DimensionDelta } from './eval';
 import { Config } from './config';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
 const GRADE_EMOJI: Record<string, string> = { A: '🟢', B: '🔵', C: '🟡', D: '🟠', F: '🔴' };
 const MARKER = '<!-- trustmodel-trust-review -->';
+
+/**
+ * Returns true when the before/after CI bands overlap — meaning the observed
+ * delta is indistinguishable from LLM-judge noise.
+ *
+ * Overlap condition: after_ci_low < before_ci_high  (bands touch or cross)
+ * Equivalently: NOT (after_ci_high < before_ci_low), i.e. they don't miss.
+ *
+ * Falls back to false (treat as real regression) when any CI bound is absent.
+ */
+function isWithinNoise(d: DimensionDelta): boolean {
+  if (d.ci_low == null || d.ci_high == null) return false;
+  if (d.before_ci_low == null || d.before_ci_high == null) return false;
+  // Bands overlap when one doesn't entirely sit above the other.
+  return !(d.ci_high < d.before_ci_low || d.before_ci_high < d.ci_low);
+}
 
 function deltaStr(d: number | null | undefined): string {
   if (d == null || d === 0) return '—';
@@ -52,17 +68,44 @@ export async function postReviewComment({
     lines.push('> [Get API key →](https://app.trustmodel.ai/keys)  &nbsp;  [Learn more →](https://trustmodel.ai/trust-review-action)');
     lines.push('');
   } else if (result.dimensionDeltas && result.dimensionDeltas.length > 0) {
-    lines.push('| Dimension | Before | After | Change |');
-    lines.push('|---|---|---|---|');
-    const sorted = [...result.dimensionDeltas].sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0));
-    for (const d of sorted) {
-      const crit   = d.critical ? '⭐ ' : '';
-      const before = d.before != null ? String(d.before) : '—';
-      const after  = d.after  != null ? String(d.after)  : '—';
-      lines.push(`| ${crit}${d.label} | ${before} | ${after} | ${deltaStr(d.delta)} |`);
+    const hasVariance = result.dimensionDeltas.some(d => d.ci_low != null || d.ci_high != null);
+    if (hasVariance) {
+      lines.push('| Dimension | Before | After | Change |');
+      lines.push('|---|---|---|---|');
+      const sorted = [...result.dimensionDeltas].sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0));
+      for (const d of sorted) {
+        const crit   = d.critical ? '⭐ ' : '';
+        const before = d.before != null ? String(d.before) : '—';
+        // Format "80 (±3)" when CI half-range is available, else plain score.
+        const ciHalf = (d.ci_low != null && d.ci_high != null)
+          ? Math.round((d.ci_high - d.ci_low) / 2)
+          : null;
+        const afterStr = ciHalf != null
+          ? `${d.after} (±${ciHalf})`
+          : String(d.after);
+        // Flag within-noise regressions explicitly.
+        const withinNoise = isWithinNoise(d);
+        const changeStr = withinNoise
+          ? `${deltaStr(d.delta)} _(within noise)_`
+          : deltaStr(d.delta);
+        lines.push(`| ${crit}${d.label} | ${before} | ${afterStr} | ${changeStr} |`);
+      }
+    } else {
+      lines.push('| Dimension | Before | After | Change |');
+      lines.push('|---|---|---|---|');
+      const sorted = [...result.dimensionDeltas].sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0));
+      for (const d of sorted) {
+        const crit   = d.critical ? '⭐ ' : '';
+        const before = d.before != null ? String(d.before) : '—';
+        const after  = d.after  != null ? String(d.after)  : '—';
+        lines.push(`| ${crit}${d.label} | ${before} | ${after} | ${deltaStr(d.delta)} |`);
+      }
     }
     lines.push('');
     lines.push('> ⭐ Critical dimension — a drop of >10 points blocks the TR even if the overall score passes.');
+    if (hasVariance) {
+      lines.push('> _(±N)_ = half-width of the judge-noise confidence interval. "within noise" = CI bands overlap; not a regression.');
+    }
     lines.push('');
   }
 
