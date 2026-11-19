@@ -1,3 +1,18 @@
+# TrustModel Review Action
+#
+# Free OSS tier (no api_key required):
+#   Public repos automatically receive a preliminary TrustScore via GitHub OIDC
+#   with no API key. To enable the OIDC path and get a richer score, add this
+#   to your workflow job:
+#
+#     permissions:
+#       id-token: write   # required for GitHub OIDC token (free public-repo scan)
+#       contents: read
+#       pull-requests: write
+#
+#   Without id-token: write the action falls back to the domain-based scan.
+#   Private repos always require an api_key.
+
 name: 'TrustModel Review'
 description: 'TrustScore gate for AI changes — posts a 10-dimension trust review on every PR, blocks merge on regression.'
 author: 'pdxlab'
