@@ -16,7 +16,7 @@ function deltaStr(d: number | null | undefined): string {
 }
 
 export async function postReviewComment({
-  octokit, ctx, prNumber, headSha, result, cfg,
+  octokit, ctx, prNumber, headSha, result, cfg, sarifEnabled,
 }: {
   octokit: Octokit;
   ctx: Context;
@@ -24,6 +24,7 @@ export async function postReviewComment({
   headSha: string;
   result: EvalResult;
   cfg: Config;
+  sarifEnabled?: boolean;
 }): Promise<void> {
   const passed = result.trustScore >= cfg.threshold;
   const grade  = result.grade ?? '—';
@@ -93,6 +94,10 @@ export async function postReviewComment({
   links.push('[🔍 TrustModel console →](https://app.trustmodel.ai)');
   lines.push(links.join('  &nbsp;·&nbsp;  '));
   lines.push('');
+  if (sarifEnabled) {
+    lines.push('📋 Findings also uploaded to [Code Scanning](../../security/code-scanning).');
+    lines.push('');
+  }
   lines.push('---');
   lines.push('*[AI Trust Reviewer](https://github.com/pdxlab/trustmodel-review-action) — the Trust Review for every AI PR. The `trustmodel/trust-review` check must be green before deploy.*');
 

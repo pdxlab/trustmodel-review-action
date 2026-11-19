@@ -6,20 +6,46 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist --source-map --minify",
-    "package": "npm run build"
+    "package": "npm run build",
+    "test": "jest"
   },
-  "keywords": ["github-action", "ai", "trustscore", "governance", "llm", "eval"],
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/src/__tests__/**/*.test.ts"
+    ],
+    "moduleFileExtensions": [
+      "ts",
+      "js"
+    ],
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    }
+  },
+  "keywords": [
+    "github-action",
+    "ai",
+    "trustscore",
+    "governance",
+    "llm",
+    "eval"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@actions/artifact": "^2.3.2",
     "@actions/core": "^1.10.1",
     "@actions/github": "^6.0.0",
     "js-yaml": "^4.1.0",
     "minimatch": "^9.0.4"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
     "@vercel/ncc": "^0.38.1",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.3.0"
   }
 }

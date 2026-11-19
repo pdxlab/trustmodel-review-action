@@ -34,6 +34,10 @@ inputs:
     description: 'TrustModel API base URL. Default https://api.trustmodel.ai.'
     required: false
     default: 'https://api.trustmodel.ai'
+  sarif:
+    description: 'Upload SARIF to GitHub Code Scanning (requires security-events: write). Default true.'
+    required: false
+    default: 'true'
 
 outputs:
   trust_score:
@@ -44,6 +48,8 @@ outputs:
     description: 'true if the gate passed, false if it failed.'
   report_url:
     description: 'URL to the full report in the TrustModel console.'
+  sarif_path:
+    description: 'Absolute path to the SARIF file written to the runner (for upload-sarif step).'
 
 runs:
   using: 'node20'

@@ -1,9 +1,14 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
+import { DefaultArtifactClient } from '@actions/artifact';
+import { writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { detectAiChanges } from './detector';
 import { runEval, EvalResult } from './eval';
 import { postReviewComment } from './comment';
 import { readTrustmodelConfig } from './config';
+import { buildSarif } from './sarif';
 
 async function run(): Promise<void> {
   try {
@@ -33,6 +38,7 @@ async function run(): Promise<void> {
       detectPatterns:    core.getInput('detect').split(',').map(s => s.trim()).filter(Boolean),
       baseUrl:           core.getInput('base_url') || 'https://api.trustmodel.ai',
     });
+    const sarifEnabled = core.getInput('sarif') !== 'false';
 
     const octokit = github.getOctokit(process.env.GITHUB_TOKEN!);
     const repo    = `${ctx.repo.owner}/${ctx.repo.repo}`;
@@ -72,7 +78,39 @@ async function run(): Promise<void> {
     core.info(`Eval result: trustScore=${result.trustScore} grade=${result.grade} free=${result.free}`);
 
     // 3. Post the Trust Review comment.
-    await postReviewComment({ octokit, ctx, prNumber: pr.number, headSha: pr.head.sha, result, cfg });
+    await postReviewComment({ octokit, ctx, prNumber: pr.number, headSha: pr.head.sha, result, cfg, sarifEnabled });
+
+    // 3b. Write SARIF + plain JSON outputs and upload as workflow artifacts.
+    //     - tr-results.sarif  → uploadable to GitHub Code Scanning via
+    //       github/codeql-action/upload-sarif@v3 (see README for the step).
+    //     - tr-result.json    → TRP-conformant plain JSON for downstream steps.
+    if (sarifEnabled) {
+      try {
+        const sarifLog   = buildSarif(result, changedFiles, cfg);
+        const sarifJson  = JSON.stringify(sarifLog, null, 2);
+        const plainJson  = JSON.stringify(result,   null, 2);
+
+        const tmpDir      = tmpdir();
+        const sarifPath   = join(tmpDir, 'tr-results.sarif');
+        const plainPath   = join(tmpDir, 'tr-result.json');
+
+        writeFileSync(sarifPath, sarifJson, 'utf8');
+        writeFileSync(plainPath, plainJson, 'utf8');
+
+        const client = new DefaultArtifactClient();
+        await client.uploadArtifact(
+          'trustmodel-trust-review',
+          [sarifPath, plainPath],
+          tmpDir,
+          { retentionDays: 90 },
+        );
+        core.info('TR: SARIF + JSON artifacts uploaded (trustmodel-trust-review).');
+        core.setOutput('sarif_path', sarifPath);
+      } catch (artifactErr) {
+        // Artifact upload is best-effort — never fail the action over it.
+        core.warning(`TR: SARIF artifact upload failed (non-fatal): ${artifactErr}`);
+      }
+    }
 
     // 4. Set the trustmodel/trust-review commit status check.
     //

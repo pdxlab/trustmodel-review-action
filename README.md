@@ -79,6 +79,54 @@ Get a key at [app.trustmodel.ai](https://app.trustmodel.ai) (free tier available
 
 Settings → Branches → Branch protection → Require status checks → add `trustmodel/trust-score`.
 
+### 4 — Enable GitHub Code Scanning (optional)
+
+The action emits a **SARIF 2.1.0** file (`tr-results.sarif`) that you can upload to [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning). This surfaces TrustModel findings directly in the **Security** tab alongside your other SAST tools.
+
+Add `permissions: security-events: write` and an upload step:
+
+```yaml
+# .github/workflows/trust-review.yml
+name: TrustModel Review
+on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write   # required for Code Scanning upload
+
+jobs:
+  trust-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: TrustModel Review
+        id: tr
+        uses: pdxlab/trustmodel-review-action@v1
+        with:
+          api_key: ${{ secrets.TRUSTMODEL_API_KEY }}
+          sarif: 'true'   # default; set to 'false' to skip
+
+      # Upload SARIF to GitHub Code Scanning
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.tr.outputs.sarif_path }}
+          category: trustmodel-trust-review
+```
+
+**What appears in Code Scanning:**
+
+| TR finding | SARIF level | Code Scanning alert severity |
+|---|---|---|
+| Critical dimension drop >10 pts (enforce mode) | `error` | Critical / High |
+| Any regression (warning) | `warning` | Medium |
+| Informational (no baseline, compliance gap) | `note` | Low |
+
+Findings are attached to the first AI-related file changed in the PR. All rules link to [trustmodel.ai/agentcert#dimensions](https://trustmodel.ai/agentcert#dimensions).
+
 ---
 
 ## Configuration
@@ -94,6 +142,7 @@ Settings → Branches → Branch protection → Require status checks → add `t
 | `cert_on_pass` | `false` | Auto-issue/renew an AgentCert when the check passes. |
 | `detect` | _(see below)_ | Comma-separated glob patterns for AI files. Defaults to built-ins or `.trustmodel.yml`. |
 | `base_url` | `https://api.trustmodel.ai` | Override for self-hosted TrustModel. |
+| `sarif` | `true` | Write a SARIF 2.1.0 file and upload as a workflow artifact. Set to `false` to disable. |
 
 ### `.trustmodel.yml` (optional, in repo root)
 
@@ -145,7 +194,7 @@ PRs that don't touch any of these → action skips silently (no comment, green c
 
 - [ ] GitHub App (zero-YAML install — no secrets, no workflow file)
 - [ ] `npx @trustmodel/cli init` scaffolder
-- [ ] Sarif output for GitHub Code Scanning integration
+- [x] SARIF output for GitHub Code Scanning integration
 - [ ] AgentCert auto-issuance on pass
 - [ ] Self-hosted TrustModel support
 
