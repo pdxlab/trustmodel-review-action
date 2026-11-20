@@ -115,7 +115,7 @@ source content, API keys, or GitHub tokens.
 ## Release after merge
 
 Run `gh workflow run release.yml --ref main` after this PR merges. The main-only
-workflow repeats tests, checks the committed bundle, releases **v1.0.2**, and
+workflow repeats tests, checks the committed bundle, releases **v1.0.3**, and
 updates **v1** to the exact tested commit with a protective lease. It refuses
 to reuse a version tag that belongs to a different commit. See [release notes](RELEASE_NOTES.md).
 

@@ -1,3 +1,18 @@
+# v1.0.3
+
+- Default AI-file detection skips known false positives, decided from the path
+  alone: HTTP user-agent files (`user_agent.py`, `user-agent.ts`, `UserAgent.ts`,
+  `useragent_parser.js`) and dependency/build paths (`node_modules/`, `vendor/`,
+  `.venv/`, `venv/`, `site-packages/`, `dist/`). `tools/` now matches source files
+  only (`.py`, `.ts`, `.js`). PRs that only touch these paths now get the quiet
+  non-AI skip (successful status, no comment) instead of a pending review.
+- A custom `detect` list is used exactly as given, with no exclusions.
+- Source content is still never read or uploaded; statuses, outputs and the API
+  contract are unchanged. The PR diff evaluator has still not shipped.
+
+Run `gh workflow run release.yml --ref main` after this merges to publish v1.0.3
+and move the floating v1 tag.
+
 # v1.0.2
 
 - Node 24 runtime and CI.
