@@ -1,6 +1,6 @@
 {
   "name": "trustmodel-review-action",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Metadata-only Trust Review preview. Fails closed until PR diff evaluation is available.",
   "private": true,
   "main": "dist/index.js",
