@@ -1,3 +1,19 @@
+# v1.3.0 — AI code found by its imports, not only its path (TRUS-2642)
+
+- A changed source file (`.py .js .jsx .ts .tsx .mjs .cjs`) that matches no path
+  rule but imports an AI SDK (openai, anthropic, langchain, llama_index, litellm,
+  Google GenAI, Mistral, Cohere, Groq, Ollama, Azure AI, Bedrock runtime, Vercel
+  AI SDK) now counts as an AI change. Before, `src/services/openai_client.py` was
+  skipped as "no AI-related files changed".
+- The file is read with `git` on your runner only. Only its path is sent, in a
+  new `import_matched_files` field; content is never uploaded.
+- Bounded: at most 300 candidate files, 256 KB each; binary and deleted files are
+  skipped; dependency, build and user-agent paths stay excluded. A git error
+  falls back to path rules only.
+- A custom `detect` list turns the import scan off.
+- Requires a gateway that accepts `import_matched_files`. A PR with no import
+  matches sends exactly the same request as v1.2.1.
+
 # v1.2.1 — the PR says why Trust Review did not run (TRUS-2593)
 
 - When Trust Review cannot score a PR, the comment heading and commit status now

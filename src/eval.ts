@@ -104,6 +104,8 @@ export function parseResult(data: unknown): EvalResult {
 
 export interface RunEvalOpts {
   cfg: Config; changedFiles: string[]; baseSha: string; headSha: string; repo: string; prNumber: number;
+  // TRUS-2642: paths found by an AI SDK import on this runner. Paths only.
+  importMatchedFiles?: string[];
   transport?: typeof fetch; timeoutMs?: number; pollIntervalMs?: number;
 }
 export async function runEval(opts: RunEvalOpts): Promise<EvalResult> {
@@ -114,7 +116,9 @@ export async function runEval(opts: RunEvalOpts): Promise<EvalResult> {
   const response = await transport(`${opts.cfg.baseUrl}/v1/pr-trust/review/`, {
     method: 'POST', headers,
     body: JSON.stringify({ repo: opts.repo, pr_number: opts.prNumber, base_sha: opts.baseSha, head_sha: opts.headSha,
-                           changed_files: opts.changedFiles, threshold: opts.cfg.threshold, framework: opts.cfg.framework ?? '' }),
+                           changed_files: opts.changedFiles, threshold: opts.cfg.threshold, framework: opts.cfg.framework ?? '',
+                           // Sent only when non-empty, so such a PR's request is unchanged for older gateways.
+                           ...(opts.importMatchedFiles?.length ? { import_matched_files: opts.importMatchedFiles } : {}) }),
     signal: AbortSignal.timeout(Math.max(1, Math.min(30_000, deadline - Date.now()))),
   });
   if (!response.ok) await refusal(response);

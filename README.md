@@ -188,7 +188,11 @@ By default TR flags these path patterns as AI-related:
 - Prompts: `*.prompt`, `prompts/`, `system_prompt*`, `instructions*`
 - Agents: `agents/`, `*agent*.py`, `*agent*.ts`
 - Evals: `evals/`, `*eval*.py`, `benchmarks/`
-- LLM client config: files importing `openai`, `anthropic`, `langchain`, `litellm`, `transformers`
+- AI SDK imports (v1.3.0+): any changed `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs` or `.cjs` file that imports
+  an AI SDK — `openai`, `anthropic` / `@anthropic-ai/sdk`, `langchain` / `@langchain/*`, `langgraph`, `llama_index`,
+  `litellm`, Google GenAI, Mistral, Cohere, Groq, Ollama, Azure AI / OpenAI, Bedrock runtime, the Vercel AI SDK.
+  The file is read **only on your runner** to find the import; only its path is sent to TrustModel.
+  Files over 256 KB, binary files and deleted files are skipped. A custom `detect` list turns this off.
 - Tool definitions: `tools/`
 - Model config: `model_config*`, `llm_config*`
 
@@ -214,7 +218,7 @@ eval:
 | `api_key` | No | — | TrustModel API key. Without it the Action registers the PR path metadata but cannot return a score. |
 | `threshold` | No | `65` | Minimum TrustScore (0–100) to pass. Server enforces a minimum; your value is a floor, not a ceiling. |
 | `framework` | No | all dimensions | Compliance framework to evaluate against (see table above). |
-| `detect` | No | AI defaults | Comma-separated glob patterns to override AI-file detection. |
+| `detect` | No | AI defaults | Comma-separated glob patterns to override AI-file detection. Setting it also turns off the AI-import scan. |
 | `github_token` | No | `${{ github.token }}` | Used only to post PR comments and commit statuses. Never sent to TrustModel. |
 | `sarif_file` | No | off | Relative path ending in `.sarif` to write a SARIF 2.1.0 file for Code Scanning. See below. |
 
@@ -292,7 +296,7 @@ The commit status (`trustmodel/trust-review`) is the merge gate — not the Acti
 
 ## Security and privacy
 
-- **TR never reads file contents.** It transmits only file path names to identify which AI components changed.
+- **File contents never leave your runner.** The Action transmits only file path names. To find AI SDK imports it reads changed source files locally on the runner; that content is never uploaded.
 - **Your GitHub token stays on the runner.** It is used only to post comments and statuses to your repo.
 - **Evaluation runs server-side on TrustModel infrastructure.** TR fetches your model's public endpoint or uses your registered model config — it does not receive your code.
 - **No credential forwarding.** The Action validates that the backend never receives a GitHub token or file content.
