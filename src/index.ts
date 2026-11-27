@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { detectAiChanges } from './detector';
+import { detectAiChangeSet } from './detector';
 import { runEval, EvalResult, verifiedPass, notRun, skipped, ReviewApiError } from './eval';
 import { publishResult } from './comment';
 import { readTrustmodelConfig, ReviewMode } from './config';
@@ -40,14 +40,17 @@ export async function run(): Promise<void> {
     mode = cfg.mode;
     threshold = cfg.threshold;
     core.info(`Trust Review mode: ${mode}.`);
-    changedFiles = await detectAiChanges({ baseSha: pr.base.sha, headSha: pr.head.sha, patterns: cfg.detectPatterns });
-    core.info(`Detected ${changedFiles.length} matching file path(s). Source content is never read or uploaded.`);
+    const detected = await detectAiChangeSet({ baseSha: pr.base.sha, headSha: pr.head.sha, patterns: cfg.detectPatterns });
+    changedFiles = [...detected.pathMatched, ...detected.importMatched];
+    core.info(`Detected ${detected.pathMatched.length} AI file path(s) and ${detected.importMatched.length} file(s) importing an AI SDK. `
+              + 'File contents are read only on this runner to find imports and are never uploaded.');
     if (!changedFiles.length) {
       result = skipped();
     } else {
       const domain = core.getInput('website_domain');
       if (domain) websiteRequest = { baseUrl: cfg.baseUrl, domain: normalizeWebsiteDomain(domain) };
-      result = await runEval({ cfg, changedFiles, baseSha: pr.base.sha, headSha: pr.head.sha,
+      result = await runEval({ cfg, changedFiles: detected.pathMatched, importMatchedFiles: detected.importMatched,
+                             baseSha: pr.base.sha, headSha: pr.head.sha,
                              repo: `${ctx.repo.owner}/${ctx.repo.repo}`, prNumber: pr.number });
     }
   } catch (error) {

@@ -6,7 +6,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { runEval, parseResult, unavailable, verifiedPass, skipped, evaluationError, commitState } = require('../dist_ts/eval.js');
 const { buildComment, publishResult, statusDescription, ADVISORY_NOTE } = require('../dist_ts/comment.js');
-const { detectAiChanges, matchesDetection } = require('../dist_ts/detector.js');
+const { detectAiChanges, detectAiChangeSet, hasAiImport, matchesDetection, MAX_IMPORT_FILE_BYTES } = require('../dist_ts/detector.js');
 const { readTrustmodelConfig } = require('../dist_ts/config.js');
 const { scanWebsite, normalizeWebsiteDomain } = require('../dist_ts/website.js');
 const cfg = { apiKey: 'tm-test', baseUrl: 'http://127.0.0.1:8000', threshold: 65, detectPatterns: [] };
@@ -144,6 +144,61 @@ test('detector applies the default excludes to a real diff without reading conte
     process.chdir(dir);
     assert.deepEqual(await detectAiChanges({baseSha:base,headSha:head,patterns:[]}),['agents/run.py']);
   } finally {process.chdir(old);fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('AI SDK imports are found in ordinary-looking source files on the runner (TRUS-2642)', async()=>{
+  const old=process.cwd();const dir=fs.mkdtempSync(path.join(os.tmpdir(),'trust-imports-'));
+  const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+  const write=(f,c)=>{fs.mkdirSync(path.dirname(path.join(dir,f)),{recursive:true});fs.writeFileSync(path.join(dir,f),c);};
+  try {
+    git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    write('README.md','base');write('src/old_llm.py','from openai import OpenAI\n');
+    git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+    write('src/llm.py','import os\nfrom openai import OpenAI\n');
+    write('src/chat.ts',"import Anthropic from '@anthropic-ai/sdk';\n");
+    write('src/loader.js','const { X } = require("langchain/document_loaders");\n');
+    write('src/notes.py','# use openai later\nx = "import openai"\n');            // comment and string only
+    write('docs/setup.md','from openai import OpenAI\n');                          // not a source file
+    write('http/user_agent.py','import openai\n');                                 // excluded path
+    write('node_modules/x/index.js',"import OpenAI from 'openai';\n");            // dependency
+    write('src/big.py','import openai\n'+'#'.repeat(MAX_IMPORT_FILE_BYTES));        // over the size cap
+    write('src/blob.py','import openai\n\0binary');                                // binary
+    write('agents/run.py','plain');                                               // path rule match
+    fs.rmSync(path.join(dir,'src/old_llm.py'));                                    // deleted at head
+    git('add','-A');git('commit','-qm','head');const head=git('rev-parse','HEAD');
+    process.chdir(dir);
+    const set=await detectAiChangeSet({baseSha:base,headSha:head,patterns:[]});
+    assert.deepEqual(set.pathMatched,['agents/run.py']);
+    assert.deepEqual(set.importMatched.sort(),['src/chat.ts','src/llm.py','src/loader.js']);
+    // A custom detect list means exactly what it says: no import scan.
+    assert.deepEqual(await detectAiChangeSet({baseSha:base,headSha:head,patterns:['agents/**']}),
+                     {pathMatched:['agents/run.py'],importMatched:[]});
+    // The path-only detector is unchanged.
+    assert.deepEqual(await detectAiChanges({baseSha:base,headSha:head,patterns:[]}),['agents/run.py']);
+  } finally {process.chdir(old);fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('AI import matching: import statements only (TRUS-2642)', ()=>{
+  for (const [f,t] of [['a.py','import openai'],['a.py','from langchain_openai import ChatOpenAI'],
+    ['a.py','  from anthropic import Anthropic'],['a.py','import google.generativeai as genai'],
+    ['a.py','client = boto3.client("bedrock-runtime")'],['a.ts',"import { generateText } from 'ai';"],
+    ['a.ts',"import { openai } from '@ai-sdk/openai';"],['a.js',"const m = await import('openai');"],
+    ['a.mjs',"import OpenAI from 'openai/index.mjs';"],['a.tsx',"import { ChatOllama } from '@langchain/ollama';"]])
+    assert.equal(hasAiImport(f,t),true,t);
+  for (const [f,t] of [['a.py','import openai_helpers'],['a.py','# import openai'],['a.py','x = "openai"'],
+    ['a.ts',"import x from 'ai-tools';"],['a.ts',"import x from 'openai-like';"],['a.js','// uses the openai api']])
+    assert.equal(hasAiImport(f,t),false,t);
+});
+
+test('import-matched paths are sent only when present, as paths (TRUS-2642)', async()=>{
+  let body;
+  await runEval({...opts, importMatchedFiles:['src/llm.py'], transport: async (url, req) => {
+    body = JSON.parse(req.body); return json(na);
+  }});
+  assert.deepEqual(body.import_matched_files,['src/llm.py']);
+  assert.deepEqual(body.changed_files,['agents/run.py']);
+  await runEval({...opts, importMatchedFiles:[], transport: async (url, req) => { body = JSON.parse(req.body); return json(na); }});
+  assert.ok(!('import_matched_files' in body));
 });
 
 test('config rejects unsafe API origins and invalid thresholds', async()=>{
